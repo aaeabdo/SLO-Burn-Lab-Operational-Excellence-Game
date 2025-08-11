@@ -8,8 +8,6 @@ A single‑file, gamified **React + Vite** app to learn and demo core Operationa
 * **Visualize logs & signals** (throughput, errors, latency p95, saturation).
 * **Experience alerting** with **Google’s Multi‑Window Multi‑Burn‑Rate (MWMB)** rules and compare to classic threshold alerts.
 
-> Built for the “Operational Excellence Handbook: Mastering the Pulse of Our Digital World.” No data leaves your browser.
-
 ---
 
 ## ✨ Why this exists
@@ -18,9 +16,13 @@ SLOs, SLIs, error budgets, and burn‑rate alerts can feel abstract. This projec
 
 ---
 
+
 ## 🚀 Demo
 
 You can host it as a static site (GitHub Pages, Netlify, Vercel, Cloudflare Pages). See **Deploy** below.
+
+[Live demo](https://aaeabdo.github.io/SLO-Burn-Lab-Operational-Excellence-Game) — try it out!
+
 
 ---
 
@@ -239,8 +241,7 @@ When **SLI‑baked** mode is on, burn‑rate calculations treat `!is_successful 
 PRs and issues welcome! Please:
 
 1. Open an issue describing the change.
-2. Keep the single‑file app accessible (keyboard focus, reduced motion preferred).
-3. Add or update self‑tests if you change burn‑rate math or windowing.
+2. Add or update self‑tests if you change burn‑rate math or windowing.
 
 ---
 
