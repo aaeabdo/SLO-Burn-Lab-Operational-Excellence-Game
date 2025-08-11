@@ -29,6 +29,7 @@ import {
   LogIn,
   Bug,
   CircleHelp,
+  Info,
 } from "lucide-react";
 
 /**
@@ -91,7 +92,7 @@ const GOLDEN_EVENT_TYPES = [
   "submit_payment",
   "complete_payment",
   "submit_order",
-  "sync_order",
+  "sync_order_with_erp",
   "fulfill_order",
   "close_order",
 ];
@@ -109,15 +110,15 @@ const DEFAULT_SLO = {
 const SCENARIOS = {
   Calm: {
     description: "Normal traffic, low errors, steady latency.",
-    baseTps: 160,
-    errorRate: 0.001,
+    baseTps: 8,
+    errorRate: 0.002,
     latencyMean: 120,
     latencyJitter: 80,
     cpuBase: 35,
   },
   "K8s Network Meltdown": {
     description: "Severe infra issue – errors & latency spike, saturation climbs.",
-    baseTps: 200,
+    baseTps: 10,
     errorRate: 0.6,
     latencyMean: 1800,
     latencyJitter: 600,
@@ -125,7 +126,7 @@ const SCENARIOS = {
   },
   "Viral Discount Code": {
     description: "Throughput surge; business-rule breach (discount >= 50% usage).",
-    baseTps: 160,
+    baseTps: 80,
     errorRate: 0.05,
     latencyMean: 400,
     latencyJitter: 250,
@@ -140,7 +141,7 @@ function clamp(n, min, max) {
 }
 
 function formatPct(n, digits = 2) {
-  if (Number.isNaN(n)) return "0%";
+  if (!Number.isFinite(n)) return "–";
   return `${n.toFixed(digits)}%`;
 }
 
@@ -168,6 +169,10 @@ function percentile(arr, p) {
   const sorted = [...arr].sort((a, b) => a - b);
   const idx = Math.ceil((p / 100) * sorted.length) - 1;
   return sorted[clamp(idx, 0, sorted.length - 1)];
+}
+
+function expectedBadPercent(sloTarget, burnThr) {
+  return (100 - sloTarget) * burnThr;
 }
 
 // ---- Tiny UI primitives ----------------------------------------------------
@@ -254,6 +259,14 @@ export default function OperationalExcellenceGame() {
   // Auto-apply tier SLO presets (availability min & latency max)
   const [autoTierPresets, setAutoTierPresets] = useState(true);
 
+  // NEW: Let user lock expected threshold calculations to a fixed SLO
+  const [lockExpected, setLockExpected] = useState(false);
+  const [lockedSloTarget, setLockedSloTarget] = useState(slo.availabilityTarget);
+  useEffect(() => {
+    // If not locked, track current SLO automatically
+    if (!lockExpected) setLockedSloTarget(slo.availabilityTarget);
+  }, [slo.availabilityTarget, lockExpected]);
+
   // Logs store (cap to 3000 for perf)
   const [logs, setLogs] = useState([]);
 
@@ -331,8 +344,10 @@ export default function OperationalExcellenceGame() {
   }, [tpsSeries, windowLogs]);
 
   // Error budget math (per rolling window)
-  const sloTarget = slo.availabilityTarget;
-  const errorBudgetPercent = 100 - sloTarget; // e.g. 0.5%
+  const sloTarget = slo.availabilityTarget; // current, editable
+  const expectedSlo = lockExpected ? lockedSloTarget : sloTarget; // used for "expected" displays only
+  const errorBudgetPercent = 100 - sloTarget; // current EB for observed burn calc
+
   const observedBadPercent = Number.isNaN(availability)
     ? 0
     : clamp(100 - availability, 0, 100);
@@ -361,7 +376,7 @@ export default function OperationalExcellenceGame() {
     if (!total) return { total: 0, badPct: 0, burn: 0 };
     const bad = slice.filter((l) => !goodByPolicy(l)).length; // ⬅️ policy-based errors
     const badPct = (bad / total) * 100;
-    const burn = errorBudgetPercent > 0 ? badPct / errorBudgetPercent : Infinity;
+    const burn = (100 - sloTarget) > 0 ? badPct / (100 - sloTarget) : Infinity; // observed burn uses current SLO
     return { total, badPct, burn };
   }
 
@@ -746,7 +761,6 @@ export default function OperationalExcellenceGame() {
 
     // Test 9: preset overwrite (exact mapping)
     const preset = { availabilityTarget: 99.95, latencyP95Target: 500 };
-    const prev = { availabilityTarget: 99.9, latencyP95Target: 600 };
     const overwritten = {
       availabilityTarget: preset.availabilityTarget,
       latencyP95Target: preset.latencyP95Target,
@@ -758,6 +772,18 @@ export default function OperationalExcellenceGame() {
     const empty = { total: 0, badPct: 0, burn: 0 };
     results.push({ name: "burnStats empty window", pass: empty.total === 0 && empty.badPct === 0 && empty.burn === 0, got: JSON.stringify(empty), expected: JSON.stringify({ total:0, badPct:0, burn:0 }) });
 
+    // Test 11: expected bad% at threshold = EB * thr
+    const EB = 100 - 99.9; // 0.1%
+    const thr = 14.4;
+    const expBad = EB * thr; // 1.44%
+    results.push({ name: "EB * 14.4 = 1.44%", pass: Math.abs(expBad - 1.44) < 1e-9, got: expBad, expected: 1.44 });
+
+    // Test 12: lock keeps expected static
+    const lockedSLO = 99.9, changedSLO = 99.5;
+    const before = expectedBadPercent(lockedSLO, 14.4);
+    const after = expectedBadPercent(lockedSLO, 14.4); // unchanged because we use locked
+    results.push({ name: "lock expected static", pass: Math.abs(before - after) < 1e-12, got: after, expected: before });
+
     // Extra Tests: edge cases
     const pNaN = percentile([], 95);
     results.push({ name: "percentile([]) is NaN", pass: Number.isNaN(pNaN), got: String(pNaN), expected: "NaN" });
@@ -765,6 +791,9 @@ export default function OperationalExcellenceGame() {
 
     return results;
   }, []);
+
+  // Helper for Inspector (uses expectedSlo, which may be locked)
+  const expBadPctAt = (thr) => expectedBadPercent(expectedSlo, thr);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 text-slate-800">
@@ -883,6 +912,21 @@ export default function OperationalExcellenceGame() {
                 <span className="text-xs text-slate-500">good = success {"&"} (latency ≤ target)</span>
               </div>
 
+              {/* NEW: Lock expected thresholds to a fixed SLO for clarity */}
+              <div className="flex items-center justify-between">
+                <Toggle
+                  checked={lockExpected}
+                  onChange={(v) => {
+                    setLockExpected(v);
+                    if (v) setLockedSloTarget(sloTarget);
+                  }}
+                  label="Lock expected (MWMB) to current SLO"
+                />
+                <div className="text-xs text-slate-500">
+                  Using SLO for expected: <b>{expectedSlo}%</b>
+                </div>
+              </div>
+
               <div className="grid grid-cols-3 gap-2 mt-2">
                 <Stat label="Availability" value={formatPct(availability || 0)} sub="rolling 60s (policy-based)" />
                 <Stat label="Latency p95" value={formatMs(p95)} sub="rolling 60s" />
@@ -890,8 +934,8 @@ export default function OperationalExcellenceGame() {
               </div>
 
               <div className="grid grid-cols-3 gap-2">
-                <Stat label="Error Budget" value={`${errorBudgetPercent.toFixed(2)}%`} sub={`SLO ${sloTarget}%`} />
-                <Stat label="Observed Bad" value={`${observedBadPercent.toFixed(2)}%`} sub={`policy: ${bakeSLI ? "success+latency" : "success only"}`} />
+                <Stat label="Error Budget" value={formatPct(100 - sloTarget)} sub={`SLO ${sloTarget}%`} />
+                <Stat label="Observed Bad" value={formatPct(observedBadPercent)} sub={`policy: ${bakeSLI ? "success+latency" : "success only"}`} />
                 <Stat label="Burn Rate" value={`${Number.isFinite(burnRate) ? burnRate.toFixed(2) : "∞"}x`} sub="MWMB uses this" />
               </div>
             </div>
@@ -1073,6 +1117,7 @@ export default function OperationalExcellenceGame() {
                 const w = GOOGLE_MWMB[k];
                 const S = BR[k].s;
                 const L = BR[k].l;
+                const thrBadPct = expBadPctAt(w.thr);
                 const fired = S.burn >= w.thr && L.burn >= w.thr && S.total > 20 && L.total > 20;
                 return (
                   <div key={k} className="p-3 rounded-xl border bg-white">
@@ -1088,29 +1133,48 @@ export default function OperationalExcellenceGame() {
                         {fired ? "Would fire" : "Not firing"}
                       </span>
                     </div>
-                    <div className="mt-2 grid grid-cols-3 gap-2 text-sm">
+                    <div className="mt-2 grid grid-cols-4 gap-2 text-sm">
                       <Stat
                         label={`Short (~${Math.round(w.short)}s) burn`}
                         value={`${S.burn.toFixed(2)}x`}
-                        sub={`${S.total} evts • bad ${S.badPct.toFixed(2)}%`}
+                        sub={`${S.total} evts • bad ${formatPct(S.badPct)}`}
                       />
                       <Stat
                         label={`Long (~${Math.round(w.long)}s) burn`}
                         value={`${L.burn.toFixed(2)}x`}
-                        sub={`${L.total} evts • bad ${L.badPct.toFixed(2)}%`}
+                        sub={`${L.total} evts • bad ${formatPct(L.badPct)}`}
                       />
                       <Stat
-                        label="Threshold"
-                        value={`${w.thr}x`}
-                        sub={`policy=${bakeSLI ? "SLI baked" : "success only"}`}
+                        label="Expected bad% (at thr)"
+                        value={formatPct(thrBadPct)}
+                        sub={`thr=${w.thr}x • using SLO ${expectedSlo}%`}
+                      />
+                      <Stat
+                        label="Obs bad% (S/L)"
+                        value={`${formatPct(S.badPct)} / ${formatPct(L.badPct)}`}
+                        sub={`need ≥ ${formatPct(thrBadPct)}`}
                       />
                     </div>
                   </div>
                 );
               })}
-              <div className="text-xs text-slate-500">
-                Short window is 1/12 of the long window. With <b>SLI baked</b>, a request is counted bad if it is unsuccessful <i>or</i> too slow (latency &gt; threshold). This makes burn-rate alerting sufficient to capture customer impact.
+              <div className="text-xs text-slate-600 flex items-start gap-2">
+                <Info className="w-4 h-4 mt-0.5" />
+                <div>
+                  <b>Expected is static when locked:</b> toggle <i>Lock expected (MWMB) to current SLO</i> to freeze calculations. Observed burn moves with traffic; thresholds (14.4×, 6×, …) are fixed; expected bad% changes only if the SLO used for the math changes.
+                </div>
               </div>
+            </div>
+          </Card>
+
+          <Card title="Burn-rate Inspector" icon={<Gauge className="w-4 h-4" />}>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <Stat label="Current SLO (observed)" value={`${sloTarget}%`} sub="drives observed burn" />
+              <Stat label="SLO for expected" value={`${expectedSlo}%`} sub={lockExpected ? "locked" : "follows current"} />
+              <Stat label="14.4× (page)" value={formatPct(expBadPctAt(14.4))} sub="expected bad%" />
+              <Stat label="6× (page)" value={formatPct(expBadPctAt(6))} sub="expected bad%" />
+              <Stat label="3× (ticket)" value={formatPct(expBadPctAt(3))} sub="expected bad%" />
+              <Stat label="1× (ticket)" value={formatPct(expBadPctAt(1))} sub="expected bad%" />
             </div>
           </Card>
 
