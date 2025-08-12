@@ -111,7 +111,7 @@ const SCENARIOS = {
   Calm: {
     description: "Normal traffic, low errors, steady latency.",
     baseTps: 8,
-    errorRate: 0.003,
+    errorRate: 0.001,
     latencyMean: 120,
     latencyJitter: 80,
     cpuBase: 35,
