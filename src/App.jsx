@@ -111,7 +111,7 @@ const SCENARIOS = {
   Calm: {
     description: "Normal traffic, low errors, steady latency.",
     baseTps: 8,
-    errorRate: 0.002,
+    errorRate: 0.003,
     latencyMean: 120,
     latencyJitter: 80,
     cpuBase: 35,
@@ -127,7 +127,7 @@ const SCENARIOS = {
   "Viral Discount Code": {
     description: "Throughput surge; business-rule breach (discount >= 50% usage).",
     baseTps: 80,
-    errorRate: 0.05,
+    errorRate: 0.01,
     latencyMean: 400,
     latencyJitter: 250,
     cpuBase: 75,
@@ -148,6 +148,13 @@ function formatPct(n, digits = 2) {
 function formatMs(n) {
   if (!Number.isFinite(n)) return "–";
   return `${Math.round(n)} ms`;
+}
+
+function formatDays(n) {
+  if (!Number.isFinite(n)) return "–";
+  if (n === Infinity) return "∞";
+  if (n < 1) return `${(n * 24).toFixed(1)} h`;
+  return `${n.toFixed(1)} d`;
 }
 
 function timeAgo(ms) {
@@ -175,15 +182,28 @@ function expectedBadPercent(sloTarget, burnThr) {
   return (100 - sloTarget) * burnThr;
 }
 
+// ---- Error budget math helpers --------------------------------------------
+const SLO_PERIOD_DAYS = 30; // default evaluation window
+const SLO_PERIOD_SECONDS = SLO_PERIOD_DAYS * 24 * 3600;
+function budgetConsumedPct(burn, windowSeconds) {
+  return (burn * windowSeconds * 100) / SLO_PERIOD_SECONDS; // percentage of monthly budget
+}
+function daysToDeplete(burn) {
+  return burn > 0 ? SLO_PERIOD_DAYS / burn : Infinity;
+}
+
 // ---- Tiny UI primitives ----------------------------------------------------
 
-function Card({ title, icon, children, right }) {
+function Card({ title, icon, children, right, sub }) {
   return (
     <div className="rounded-2xl border bg-white/80 backdrop-blur p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           {icon}
-          <h3 className="font-semibold text-slate-800">{title}</h3>
+          <div>
+            <h3 className="font-semibold text-slate-800">{title}</h3>
+            {sub && <div className="text-xs text-slate-500 mt-0.5">{sub}</div>}
+          </div>
         </div>
         {right}
       </div>
@@ -354,19 +374,22 @@ export default function OperationalExcellenceGame() {
   const burnRate =
     errorBudgetPercent > 0 ? observedBadPercent / errorBudgetPercent : Infinity;
 
-  // --- Google MWMB burn-rate config (demo time scaling) ----------------------
+  // --- Google MWMB burn-rate config (demo time scaling + real windows) ------
   // Demo scale: 1 hour of real time == 60 seconds in the simulator.
   const DEMO_HOUR_SEC = 60; // tweak if you want faster/slower demos
   const hours = (h) => h * DEMO_HOUR_SEC;
   const minutes = (m) => (m / 60) * DEMO_HOUR_SEC;
   const days = (d) => d * 24 * DEMO_HOUR_SEC;
 
+  // Real seconds for the same windows (used for budget math independent of demo scaling)
+  const REAL = { h: 3600, m: 60, d: 86400 };
+
   // Google-recommended pairs (short window is 1/12 of long window):
   const GOOGLE_MWMB = {
-    pageA: { long: hours(1), short: minutes(5), thr: 14.4, label: "Page: 1h & 5m @14.4x" },
-    pageB: { long: hours(6), short: minutes(30), thr: 6, label: "Page: 6h & 30m @6x" },
-    ticketA: { long: hours(24), short: hours(2), thr: 3, label: "Ticket: 24h & 2h @3x" },
-    ticketB: { long: days(3), short: hours(6), thr: 1, label: "Ticket: 3d & 6h @1x" },
+    pageA: { long: hours(1), short: minutes(5), longReal: REAL.h * 1, shortReal: REAL.m * 5, thr: 14.4, label: "Page: 1h & 5m @14.4x" },
+    pageB: { long: hours(6), short: minutes(30), longReal: REAL.h * 6, shortReal: REAL.m * 30, thr: 6, label: "Page: 6h & 30m @6x" },
+    ticketA: { long: hours(24), short: hours(2), longReal: REAL.h * 24, shortReal: REAL.h * 2, thr: 3, label: "Ticket: 24h & 2h @3x" },
+    ticketB: { long: days(3), short: hours(6), longReal: REAL.d * 3, shortReal: REAL.h * 6, thr: 1, label: "Ticket: 3d & 6h @1x" },
   };
 
   function burnStats(seconds) {
@@ -740,14 +763,15 @@ export default function OperationalExcellenceGame() {
     const calc = eb > 0 ? bad / eb : Infinity;
     results.push({ name: "burn = bad%/EB%", pass: Math.abs(calc - expectedBurn) < 1e-9, got: calc, expected: expectedBurn });
 
-    // Test 3: short == long/12 checks
-    const hours = (h) => 60 * h;
-    const minutes = (m) => (m / 60) * 60;
-    const days = (d) => d * 24 * 60;
-    results.push({ name: "5m is 1/12 of 1h", pass: Math.abs(minutes(5) * 12 - hours(1)) < 1e-9, got: minutes(5) * 12, expected: hours(1) });
-    results.push({ name: "30m is 1/12 of 6h", pass: Math.abs(minutes(30) * 12 - hours(6)) < 1e-9, got: minutes(30) * 12, expected: hours(6) });
-    results.push({ name: "2h is 1/12 of 24h", pass: Math.abs(hours(2) * 12 - hours(24)) < 1e-9, got: hours(2) * 12, expected: hours(24) });
-    results.push({ name: "6h is 1/12 of 3d", pass: Math.abs(hours(6) * 12 - days(3)) < 1e-9, got: hours(6) * 12, expected: days(3) });
+    // Test 3: short == long/12 checks (real windows)
+    const long1h = 3600, short5m = 300;
+    const long6h = 6 * 3600, short30m = 1800;
+    const long24h = 24 * 3600, short2h = 2 * 3600;
+    const long3d = 3 * 86400, short6h = 6 * 3600;
+    results.push({ name: "5m is 1/12 of 1h", pass: Math.abs((short5m * 12) - long1h) < 1e-9, got: short5m * 12, expected: long1h });
+    results.push({ name: "30m is 1/12 of 6h", pass: Math.abs((short30m * 12) - long6h) < 1e-9, got: short30m * 12, expected: long6h });
+    results.push({ name: "2h is 1/12 of 24h", pass: Math.abs((short2h * 12) - long24h) < 1e-9, got: short2h * 12, expected: long24h });
+    results.push({ name: "6h is 1/12 of 3d", pass: Math.abs((short6h * 12) - long3d) < 1e-9, got: short6h * 12, expected: long3d });
 
     // Test 7: SLI-baked policy – success but slow is bad when baked
     const sloMs = 200;
@@ -768,21 +792,19 @@ export default function OperationalExcellenceGame() {
     results.push({ name: "overwrite availability to preset", pass: overwritten.availabilityTarget === 99.95, got: overwritten.availabilityTarget, expected: 99.95 });
     results.push({ name: "overwrite latency to preset", pass: overwritten.latencyP95Target === 500, got: overwritten.latencyP95Target, expected: 500 });
 
-    // Test 10: burnStats with empty window
-    const empty = { total: 0, badPct: 0, burn: 0 };
-    results.push({ name: "burnStats empty window", pass: empty.total === 0 && empty.badPct === 0 && empty.burn === 0, got: JSON.stringify(empty), expected: JSON.stringify({ total:0, badPct:0, burn:0 }) });
+    // Test 10: budget consumed at thresholds on long windows
+    const pct1 = budgetConsumedPct(14.4, 3600);
+    const pct2 = budgetConsumedPct(6, 6*3600);
+    const pct3 = budgetConsumedPct(3, 24*3600);
+    const pct4 = budgetConsumedPct(1, 3*86400);
+    results.push({ name: "1h@14.4 consumes 2%", pass: Math.abs(pct1 - 2) < 1e-9, got: pct1, expected: 2 });
+    results.push({ name: "6h@6 consumes 5%", pass: Math.abs(pct2 - 5) < 1e-9, got: pct2, expected: 5 });
+    results.push({ name: "24h@3 consumes 10%", pass: Math.abs(pct3 - 10) < 1e-9, got: pct3, expected: 10 });
+    results.push({ name: "3d@1 consumes 10%", pass: Math.abs(pct4 - 10) < 1e-9, got: pct4, expected: 10 });
 
-    // Test 11: expected bad% at threshold = EB * thr
-    const EB = 100 - 99.9; // 0.1%
-    const thr = 14.4;
-    const expBad = EB * thr; // 1.44%
-    results.push({ name: "EB * 14.4 = 1.44%", pass: Math.abs(expBad - 1.44) < 1e-9, got: expBad, expected: 1.44 });
-
-    // Test 12: lock keeps expected static
-    const lockedSLO = 99.9, changedSLO = 99.5;
-    const before = expectedBadPercent(lockedSLO, 14.4);
-    const after = expectedBadPercent(lockedSLO, 14.4); // unchanged because we use locked
-    results.push({ name: "lock expected static", pass: Math.abs(before - after) < 1e-12, got: after, expected: before });
+    // Test 11: time to depletion at threshold
+    const d1 = daysToDeplete(14.4);
+    results.push({ name: "deplete at 14.4x ≈ 2.1d", pass: Math.abs(d1 - (30/14.4)) < 1e-9, got: d1, expected: 30/14.4 });
 
     // Extra Tests: edge cases
     const pNaN = percentile([], 95);
@@ -794,6 +816,17 @@ export default function OperationalExcellenceGame() {
 
   // Helper for Inspector (uses expectedSlo, which may be locked)
   const expBadPctAt = (thr) => expectedBadPercent(expectedSlo, thr);
+
+  // Build a compact summary line for burn-rate pairs using threshold math
+  const mwmbSummary = useMemo(() => {
+    const items = ["pageA", "pageB", "ticketA", "ticketB"].map((k) => {
+      const w = GOOGLE_MWMB[k];
+      const consumedAtThr = budgetConsumedPct(w.thr, w.longReal);
+      const depleteDaysAtThr = daysToDeplete(w.thr);
+      return `${w.label.split(" @")[0]}: ${consumedAtThr.toFixed(1)}% consumed • depleted in ${formatDays(depleteDaysAtThr)}`;
+    });
+    return items.join(" \u2022 ");
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 text-slate-800">
@@ -1111,7 +1144,15 @@ export default function OperationalExcellenceGame() {
             </div>
           </Card>
 
-          <Card title={`Burn-rate Alerts (Google MWMB) \u2022 Demo scale: 1h= ${DEMO_HOUR_SEC}s`} icon={<BellRing className="w-4 h-4" />}>
+          <Card
+            title={`Burn-rate Alerts (Google MWMB) \u2022 Demo scale: 1h= ${DEMO_HOUR_SEC}s`}
+            sub={
+              <span>
+                {mwmbSummary}
+              </span>
+            }
+            icon={<BellRing className="w-4 h-4" />}
+          >
             <div className="space-y-3">
               {["pageA", "pageB", "ticketA", "ticketB"].map((k) => {
                 const w = GOOGLE_MWMB[k];
@@ -1119,6 +1160,11 @@ export default function OperationalExcellenceGame() {
                 const L = BR[k].l;
                 const thrBadPct = expBadPctAt(w.thr);
                 const fired = S.burn >= w.thr && L.burn >= w.thr && S.total > 20 && L.total > 20;
+
+                // Budget math at threshold & at observed long-window burn
+                const consumedAtThr = budgetConsumedPct(w.thr, w.longReal);
+                const depleteAtThr = daysToDeplete(w.thr);
+
                 return (
                   <div key={k} className="p-3 rounded-xl border bg-white">
                     <div className="flex items-center justify-between">
@@ -1133,7 +1179,10 @@ export default function OperationalExcellenceGame() {
                         {fired ? "Would fire" : "Not firing"}
                       </span>
                     </div>
-                    <div className="mt-2 grid grid-cols-4 gap-2 text-sm">
+                    <div className="text-xs text-slate-600 mt-1">
+                      At threshold: <b>{consumedAtThr.toFixed(1)}% budget consumed in long window</b> • <b>depleted in {formatDays(depleteAtThr)}</b>
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-sm">
                       <Stat
                         label={`Short (~${Math.round(w.short)}s) burn`}
                         value={`${S.burn.toFixed(2)}x`}
@@ -1149,11 +1198,6 @@ export default function OperationalExcellenceGame() {
                         value={formatPct(thrBadPct)}
                         sub={`thr=${w.thr}x • using SLO ${expectedSlo}%`}
                       />
-                      <Stat
-                        label="Obs bad% (S/L)"
-                        value={`${formatPct(S.badPct)} / ${formatPct(L.badPct)}`}
-                        sub={`need ≥ ${formatPct(thrBadPct)}`}
-                      />
                     </div>
                   </div>
                 );
@@ -1161,7 +1205,7 @@ export default function OperationalExcellenceGame() {
               <div className="text-xs text-slate-600 flex items-start gap-2">
                 <Info className="w-4 h-4 mt-0.5" />
                 <div>
-                  <b>Expected is static when locked:</b> toggle <i>Lock expected (MWMB) to current SLO</i> to freeze calculations. Observed burn moves with traffic; thresholds (14.4×, 6×, …) are fixed; expected bad% changes only if the SLO used for the math changes.
+                  <b>Expected bad% (at thr)</b> = <code>EB% × burn</code>. The budget consumed in a long window is <code>burn × window / SLO_period</code>. With a 30‑day SLO period, 1h@14.4x consumes 2% and would fully deplete the budget in ~2.1 days if sustained.
                 </div>
               </div>
             </div>
