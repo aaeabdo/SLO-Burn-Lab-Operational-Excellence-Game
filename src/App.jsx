@@ -857,6 +857,19 @@ export default function OperationalExcellenceGame() {
       <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* LEFT COLUMN */}
         <div className="lg:col-span-1 space-y-4">
+          <Card title="Game Progress" icon={<Brain className="w-4 h-4" />}>
+            <div className="space-y-3">
+              <div className="w-full h-3 rounded-full bg-slate-200 overflow-hidden">
+                <div className="h-full bg-emerald-500" style={{ width: `${progress}%` }} />
+              </div>
+              <div className="text-sm flex items-center justify-between">
+                <span>
+                  Score: <b>{score}</b> / {goal}
+                </span>
+                <span className="text-slate-500">Badges: {badges.join(" • ") || "–"}</span>
+              </div>
+            </div>
+          </Card>
           <Card title="1) Select Service Tier" icon={<Target className="w-4 h-4" />}>
             <div className="grid grid-cols-2 gap-2">
               {Object.entries(TIERS).map(([k, v]) => (
@@ -974,7 +987,21 @@ export default function OperationalExcellenceGame() {
             </div>
           </Card>
 
-          <Card title="3) Push Logs" icon={<Upload className="w-4 h-4" />} right={<Toggle checked={autoSim} onChange={setAutoSim} label="Auto-simulate" />}>
+          <Card title="Quick Tips" icon={<BadgeCheck className="w-4 h-4" />}>
+            <ul className="text-sm list-disc pl-5 space-y-1">
+              <li>Burn-rate with SLI baked is usually sufficient for paging. Other alerts here are for comparison.</li>
+              <li>Pick a tier that matches impact. Higher tiers demand higher SLOs and faster MTTA/MTTR.</li>
+              <li>Track Availability & Latency as SLIs. Set SLOs that meet (or exceed) your tier’s minimums.</li>
+              <li>Use the simulator to create failures, spikes, and business-rule breaches.</li>
+              <li>Google MWMB: short=1/12 long. Page at 14.4x (1h&5m) or 6x (6h&30m); Ticket at 3x (24h&2h) or 1x (3d&6h).</li>
+            </ul>
+          </Card>
+
+        </div>
+
+        {/* MIDDLE COLUMN */}
+        <div className="lg:col-span-1 space-y-4">
+                    <Card title="3) Push Logs" icon={<Upload className="w-4 h-4" />} right={<Toggle checked={autoSim} onChange={setAutoSim} label="Auto-simulate" />}>
             <div className="space-y-3">
               <div className="flex items-center gap-2 flex-wrap">
                 <select
@@ -1049,23 +1076,6 @@ export default function OperationalExcellenceGame() {
             </div>
           </Card>
 
-          <Card title="Game Progress" icon={<Brain className="w-4 h-4" />}>
-            <div className="space-y-3">
-              <div className="w-full h-3 rounded-full bg-slate-200 overflow-hidden">
-                <div className="h-full bg-emerald-500" style={{ width: `${progress}%` }} />
-              </div>
-              <div className="text-sm flex items-center justify-between">
-                <span>
-                  Score: <b>{score}</b> / {goal}
-                </span>
-                <span className="text-slate-500">Badges: {badges.join(" • ") || "–"}</span>
-              </div>
-            </div>
-          </Card>
-        </div>
-
-        {/* MIDDLE COLUMN */}
-        <div className="lg:col-span-1 space-y-4">
           <Card title="4) Visualize Logs & Signals" icon={<TrendingUp className="w-4 h-4" />}>
             <div className="space-y-4">
               <div className="grid grid-cols-1 gap-4">
@@ -1143,8 +1153,147 @@ export default function OperationalExcellenceGame() {
               </div>
             </div>
           </Card>
+          <Card title="Recent Events" icon={<LogIn className="w-4 h-4" />} right={<span className="text-xs text-slate-500">last 120 items</span>}>
+            <div className="overflow-auto max-h-72">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-slate-500">
+                    <th className="py-1 pr-2">Time</th>
+                    <th className="py-1 pr-2">Event</th>
+                    <th className="py-1 pr-2">Success</th>
+                    <th className="py-1 pr-2">Meets SLO</th>
+                    <th className="py-1 pr-2">Latency</th>
+                    <th className="py-1 pr-2">Service</th>
+                    <th className="py-1 pr-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map((l) => (
+                    <tr key={l.tracing_context.trace_id} className="border-t">
+                      <td className="py-1 pr-2 text-slate-500">
+                        {new Date(l.ts).toLocaleTimeString()}
+                      </td>
+                      <td className="py-1 pr-2">{l.event_type}</td>
+                      <td
+                        className={`py-1 pr-2 ${
+                          l.is_successful ? "text-emerald-600" : "text-rose-600"
+                        }`}
+                      >
+                        {String(l.is_successful)}
+                      </td>
+                      <td
+                        className={`py-1 pr-2 ${
+                          l.is_slo_compliant ? "text-emerald-600" : "text-amber-600"
+                        }`}
+                      >
+                        {String(l.is_slo_compliant)}
+                      </td>
+                      <td className="py-1 pr-2">{formatMs(l.latency_ms)}</td>
+                      <td className="py-1 pr-2">{l.origin_service}</td>
+                      <td className="py-1 pr-2">{l.status_code}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+          <Card title="Export" icon={<Upload className="w-4 h-4" />}>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={() => {
+                  const blob = new Blob([JSON.stringify(logs, null, 2)], {
+                    type: "application/json",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "simulated_logs.json";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                Download Logs JSON
+              </Button>
+              <Button
+                onClick={() =>
+                  navigator.clipboard.writeText(
+                    JSON.stringify(logs.slice(-1)[0] || {}, null, 2)
+                  )
+                }
+                variant="ghost"
+              >
+                Copy Last Event
+              </Button>
+            </div>
+          </Card>
+          <Card title="Burn-rate Inspector" icon={<Gauge className="w-4 h-4" />}>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <Stat label="Current SLO (observed)" value={`${sloTarget}%`} sub="drives observed burn" />
+              <Stat label="SLO for expected" value={`${expectedSlo}%`} sub={lockExpected ? "locked" : "follows current"} />
+              <Stat label="14.4× (page)" value={formatPct(expBadPctAt(14.4))} sub="expected bad%" />
+              <Stat label="6× (page)" value={formatPct(expBadPctAt(6))} sub="expected bad%" />
+              <Stat label="3× (ticket)" value={formatPct(expBadPctAt(3))} sub="expected bad%" />
+              <Stat label="1× (ticket)" value={formatPct(expBadPctAt(1))} sub="expected bad%" />
+            </div>
+          </Card>
+        </div>
 
-          <Card
+        {/* RIGHT COLUMN */}
+
+        <div className="lg:col-span-1 space-y-4">
+                              <Card
+            title="5) Alerts in Action"
+            icon={<BellRing className="w-4 h-4" />}
+            right={<span className="text-xs text-slate-500">Acknowledge & Resolve to score</span>}
+          >
+            <div className="space-y-2 max-h-80 overflow-auto">
+              {alerts.length === 0 && (
+                <div className="text-sm text-slate-500 flex items-center gap-2">
+                  <CircleHelp className="w-4 h-4" />No active or historical alerts yet.
+                </div>
+              )}
+              {alerts.map((a) => (
+                <div key={a.id} className={`p-3 rounded-xl border ${a.resolvedAt ? "opacity-60" : ""}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        <span className="font-semibold">{a.type}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 border">{a.severity}</span>
+                      </div>
+                      <div className="text-sm mt-1">{a.message}</div>
+                      <div className="text-[11px] text-slate-500 mt-1">
+                        {timeAgo(Date.now() - a.createdAt)} • {new Date(a.createdAt).toLocaleTimeString()}
+                      </div>
+                      {a.ackAt && (
+                        <div className="text-[11px] text-slate-500">
+                          ACK in {((a.ackAt - a.createdAt) / 1000).toFixed(1)}s
+                        </div>
+                      )}
+                      {a.resolvedAt && (
+                        <div className="text-[11px] text-slate-500">
+                          Resolved in {((a.resolvedAt - a.createdAt) / 1000).toFixed(1)}s
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {!a.ackAt && (
+                        <Button onClick={() => ackAlert(a.id)}>
+                          <Clock4 className="w-4 h-4 mr-1" />Acknowledge
+                        </Button>
+                      )}
+                      {!a.resolvedAt && (
+                        <Button onClick={() => resolveAlert(a.id)} variant="primary">
+                          <ShieldCheck className="w-4 h-4 mr-1" />Resolve
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+                   <Card
             title={`Burn-rate Alerts (Google MWMB) \u2022 Demo scale: 1h= ${DEMO_HOUR_SEC}s`}
             sub={
               <span>
@@ -1211,128 +1360,6 @@ export default function OperationalExcellenceGame() {
             </div>
           </Card>
 
-          <Card title="Burn-rate Inspector" icon={<Gauge className="w-4 h-4" />}>
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <Stat label="Current SLO (observed)" value={`${sloTarget}%`} sub="drives observed burn" />
-              <Stat label="SLO for expected" value={`${expectedSlo}%`} sub={lockExpected ? "locked" : "follows current"} />
-              <Stat label="14.4× (page)" value={formatPct(expBadPctAt(14.4))} sub="expected bad%" />
-              <Stat label="6× (page)" value={formatPct(expBadPctAt(6))} sub="expected bad%" />
-              <Stat label="3× (ticket)" value={formatPct(expBadPctAt(3))} sub="expected bad%" />
-              <Stat label="1× (ticket)" value={formatPct(expBadPctAt(1))} sub="expected bad%" />
-            </div>
-          </Card>
-
-          <Card title="Recent Events" icon={<LogIn className="w-4 h-4" />} right={<span className="text-xs text-slate-500">last 120 items</span>}>
-            <div className="overflow-auto max-h-72">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-slate-500">
-                    <th className="py-1 pr-2">Time</th>
-                    <th className="py-1 pr-2">Event</th>
-                    <th className="py-1 pr-2">Success</th>
-                    <th className="py-1 pr-2">Meets SLO</th>
-                    <th className="py-1 pr-2">Latency</th>
-                    <th className="py-1 pr-2">Service</th>
-                    <th className="py-1 pr-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tableRows.map((l) => (
-                    <tr key={l.tracing_context.trace_id} className="border-t">
-                      <td className="py-1 pr-2 text-slate-500">
-                        {new Date(l.ts).toLocaleTimeString()}
-                      </td>
-                      <td className="py-1 pr-2">{l.event_type}</td>
-                      <td
-                        className={`py-1 pr-2 ${
-                          l.is_successful ? "text-emerald-600" : "text-rose-600"
-                        }`}
-                      >
-                        {String(l.is_successful)}
-                      </td>
-                      <td
-                        className={`py-1 pr-2 ${
-                          l.is_slo_compliant ? "text-emerald-600" : "text-amber-600"
-                        }`}
-                      >
-                        {String(l.is_slo_compliant)}
-                      </td>
-                      <td className="py-1 pr-2">{formatMs(l.latency_ms)}</td>
-                      <td className="py-1 pr-2">{l.origin_service}</td>
-                      <td className="py-1 pr-2">{l.status_code}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
-
-        {/* RIGHT COLUMN */}
-        <div className="lg:col-span-1 space-y-4">
-          <Card
-            title="5) Alerts in Action"
-            icon={<BellRing className="w-4 h-4" />}
-            right={<span className="text-xs text-slate-500">Acknowledge & Resolve to score</span>}
-          >
-            <div className="space-y-2 max-h-80 overflow-auto">
-              {alerts.length === 0 && (
-                <div className="text-sm text-slate-500 flex items-center gap-2">
-                  <CircleHelp className="w-4 h-4" />No active or historical alerts yet.
-                </div>
-              )}
-              {alerts.map((a) => (
-                <div key={a.id} className={`p-3 rounded-xl border ${a.resolvedAt ? "opacity-60" : ""}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4 text-amber-500" />
-                        <span className="font-semibold">{a.type}</span>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 border">{a.severity}</span>
-                      </div>
-                      <div className="text-sm mt-1">{a.message}</div>
-                      <div className="text-[11px] text-slate-500 mt-1">
-                        {timeAgo(Date.now() - a.createdAt)} • {new Date(a.createdAt).toLocaleTimeString()}
-                      </div>
-                      {a.ackAt && (
-                        <div className="text-[11px] text-slate-500">
-                          ACK in {((a.ackAt - a.createdAt) / 1000).toFixed(1)}s
-                        </div>
-                      )}
-                      {a.resolvedAt && (
-                        <div className="text-[11px] text-slate-500">
-                          Resolved in {((a.resolvedAt - a.createdAt) / 1000).toFixed(1)}s
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      {!a.ackAt && (
-                        <Button onClick={() => ackAlert(a.id)}>
-                          <Clock4 className="w-4 h-4 mr-1" />Acknowledge
-                        </Button>
-                      )}
-                      {!a.resolvedAt && (
-                        <Button onClick={() => resolveAlert(a.id)} variant="primary">
-                          <ShieldCheck className="w-4 h-4 mr-1" />Resolve
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          <Card title="Quick Tips" icon={<BadgeCheck className="w-4 h-4" />}>
-            <ul className="text-sm list-disc pl-5 space-y-1">
-              <li>Burn-rate with SLI baked is usually sufficient for paging. Other alerts here are for comparison.</li>
-              <li>Pick a tier that matches impact. Higher tiers demand higher SLOs and faster MTTA/MTTR.</li>
-              <li>Track Availability & Latency as SLIs. Set SLOs that meet (or exceed) your tier’s minimums.</li>
-              <li>Use the simulator to create failures, spikes, and business-rule breaches.</li>
-              <li>Google MWMB: short=1/12 long. Page at 14.4x (1h&5m) or 6x (6h&30m); Ticket at 3x (24h&2h) or 1x (3d&6h).</li>
-            </ul>
-          </Card>
-
           <Card title="Dev: Self-tests" icon={<Brain className="w-4 h-4" />}>
             <div className="text-xs">
               {devTests.map((t) => (
@@ -1341,36 +1368,6 @@ export default function OperationalExcellenceGame() {
                   <span>{t.pass ? "PASS" : `FAIL (got ${t.got}, expected ${t.expected})`}</span>
                 </div>
               ))}
-            </div>
-          </Card>
-
-          <Card title="Export" icon={<Upload className="w-4 h-4" />}>
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={() => {
-                  const blob = new Blob([JSON.stringify(logs, null, 2)], {
-                    type: "application/json",
-                  });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = "simulated_logs.json";
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-              >
-                Download Logs JSON
-              </Button>
-              <Button
-                onClick={() =>
-                  navigator.clipboard.writeText(
-                    JSON.stringify(logs.slice(-1)[0] || {}, null, 2)
-                  )
-                }
-                variant="ghost"
-              >
-                Copy Last Event
-              </Button>
             </div>
           </Card>
         </div>
